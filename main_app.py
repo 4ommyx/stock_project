@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from Func_app.calculate_text import optimize_dividend_tax 
 from Func_app.t_dts_socring import analyze_stock_tdts
+from Func_app.tema_socring import analyze_stock_tema
 
 app = FastAPI()
 
@@ -45,5 +46,29 @@ def api_analyze_tdts(
         start_year=start_year,
         end_year=end_year,
         threshold=threshold
+    ) 
+    return result
+
+
+@app.get("/main_app/analyze_tema/{input_stock}")
+def api_analyze_tema(
+    input_stock: str, 
+    threshold: float = 10.0,   # รับเป็น Query Param (ถ้าไม่ใส่จะใช้ค่า 10)
+    start_year: int = 2022,    # รับเป็น Query Param
+    end_year: int = 2024 ,      # รับเป็น Query Param
+    window: int = 15           # รับเป็น Query Param (TEMA Window)
+):
+    """
+    วิเคราะห์ TEMA รายตัว โดยใส่ชื่อหุ้นต่อท้าย URL
+    Ex : /main_app/analyze_tema/SCB.BK?threshold=15&window=20
+    """
+    
+    # เรียกใช้ Logic เดิม (แต่ห่อ input_stock เป็น list เพราะ logic รับเป็น list)
+    result = analyze_stock_tema(
+        symbol=input_stock,
+        start_year=start_year,
+        end_year=end_year,
+        threshold=threshold,
+        window=window
     ) 
     return result
