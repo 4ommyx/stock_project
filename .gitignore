@@ -1,0 +1,27 @@
+# Python Bytecode (ไฟล์ที่คอมไพล์แล้ว)
+*.pyc
+__pycache__/
+
+# Dependencies (Environment)
+venv/
+.venv/
+/env/
+
+# Data and Logs
+*.log
+*.sqlite3
+*.db
+/data/  # ถ้าคุณมี folder สำหรับเก็บข้อมูลชั่วคราว
+
+# IDE and Build Tools
+.vscode/  # การตั้งค่าเฉพาะบุคคลใน VS Code
+.ipynb_checkpoints/ # Checkpoints ของ Jupyter Notebook (ถ้าใช้)
+/dist/
+/build/
+
+# Uvicorn/FastAPI Specific (Files that might be created during run)
+.env  # ไฟล์สำหรับเก็บ Environment Variables (ควรเก็บเป็นความลับ)
+
+# [Critical Fix based on your Traceback]
+# ไฟล์ที่เกิด Conflict บ่อยๆ ที่ VS Code สร้างขึ้น:
+*.python-311.pyc
