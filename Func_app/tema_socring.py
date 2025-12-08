@@ -18,17 +18,23 @@ def calculate_tema(series, span):
     ema3 = ema2.ewm(span=span, adjust=False).mean()
     return (3 * ema1) - (3 * ema2) + ema3
 
-def analyze_stock_tema(symbol: str, start_year: int = 2022, end_year: int = 2024, threshold: float = 10.0, window: int = 15):
+def analyze_stock_tema(tickers: list = None, start_year: int = 2022, end_year: int = 2024, threshold: float = 10.0, window: int = 15):
     """
-    Main Logic: ดึงข้อมูลและคำนวณ TEMA รอบวัน XD พร้อมแยก Clean/Outlier
-    threshold: ใช้ตัด outlier สำหรับค่า % Return (ถ้าเปลี่ยนแปลงเกิน % นี้ถือว่าผิดปกติ)
+    Main Logic: ดึงข้อมูลและคำนวณ TEMA
     """
-    tickers = [symbol] if symbol else SET50_TICKERS
+    # [FIX] ใช้ tickers ที่ส่งมาเลย หรือถ้าไม่มีให้ใช้ SET50
+    target_tickers = tickers if tickers else SET50_TICKERS
+    
     all_data = []
 
     # วนลูปหุ้นแต่ละตัว
-    for symbol in tickers:
+    for symbol in target_tickers:
         try:
+            # [Added] ป้องกันกรณีส่ง List ซ้อน List มาโดยบังเอิญ
+            if isinstance(symbol, list):
+                symbol = symbol[0]
+                
+            stock = yf.Ticker(symbol)
             stock = yf.Ticker(symbol)
             
             # 1. ดึงข้อมูล
