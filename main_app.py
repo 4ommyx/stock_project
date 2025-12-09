@@ -4,10 +4,12 @@ from typing import Optional, List, Dict
 
 # Import Logic
 from Func_app.calculate_text import optimize_dividend_tax 
-from Func_app.t_dts_socring import analyze_stock_tdts
-from Func_app.tema_socring import analyze_stock_tema
-from Func_app.main_scoring import process_cluster_and_score
+from Func_app.Scoring.t_dts_socring import analyze_stock_tdts
+from Func_app.Scoring.tema_socring import analyze_stock_tema
+from Func_app.Scoring.main_scoring import process_cluster_and_score
 from Func_app.config import SET50_TICKERS
+from Func_app.TA.technical_analysis import get_technical_history
+from Func_app.TA.technical_analysis import get_technical_snapshot
 
 app = FastAPI()
 
@@ -156,3 +158,14 @@ def api_analyze_tema(input_stock: str, threshold: float = 10.0, start_year: int 
         
     # ถ้าไม่มีใน Cache ให้คำนวณสด
     return analyze_stock_tema([input_stock], start_year, end_year, threshold, window)
+
+
+@app.get("/main_app/technical_graph/{symbol}")
+def api_technical_graph(symbol: str, period: str = "1y"):
+    return get_technical_history(symbol, period)
+
+
+@app.get("/main_app/technical_screener")
+def api_technical_screener():
+    # จะคืนค่าเฉพาะค่าล่าสุดของทุกตัวใน SET50
+    return get_technical_snapshot()

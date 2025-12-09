@@ -2,8 +2,8 @@ import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 from Func_app.config import SET50_TICKERS
-from Func_app.t_dts_socring import analyze_stock_tdts
-from Func_app.tema_socring import analyze_stock_tema
+from Func_app.Scoring.t_dts_socring import analyze_stock_tdts
+from Func_app.Scoring.tema_socring import analyze_stock_tema
 
 def process_cluster_and_score(
     tickers: list = None, 
