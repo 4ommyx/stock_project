@@ -12,6 +12,7 @@ from Func_app.Scoring.t_dts_socring import analyze_stock_tdts
 from Func_app.Scoring.tema_socring import analyze_stock_tema
 from Func_app.Scoring.main_scoring import process_cluster_and_score
 from Func_app.TA.technical_analysis import analyze_technical_batch
+from Func_app.Predictor.predictor_XD import analyze_seasonality_batch
 
 app = FastAPI(
     title="Stock Analysis API",
@@ -26,6 +27,7 @@ CACHE_SCORING: Dict[str, dict] = {}   # Scoring Results & Cluster Info
 CACHE_TDTS: Dict[str, list] = {}      # T-DTS Raw History
 CACHE_TEMA: Dict[str, list] = {}      # TEMA Raw History
 TECHNICAL_CACHE: Dict[str, list] = {} # MACD/RSI Historical Data
+CACHE_SEASONALITY: Dict[str, dict] = {} # Seasonality Analysis
 
 # ======================================================
 # 2. PYDANTIC MODELS (Request Schemas)
@@ -57,7 +59,8 @@ def home():
             "scoring_count": len(CACHE_SCORING),
             "tdts_count": len(CACHE_TDTS),
             "tema_count": len(CACHE_TEMA),
-            "technical_count": len(TECHNICAL_CACHE)
+            "technical_count": len(TECHNICAL_CACHE),
+            "seasonality_count": len(CACHE_SEASONALITY)
         }
     }
 
@@ -228,4 +231,109 @@ def _format_cache_response(stock_key, raw_data, threshold, score_col):
             "clean_data": df[~is_outlier].to_dict(orient='records'),
             "unclean_data": df[is_outlier].to_dict(orient='records')
         }
+    }
+
+
+# ======================================================
+# DIVIDEND SEASONALITY ENDPOINTS
+# ======================================================
+
+# --- 1. POST: Update Cache (เส้นเดียวจบ) ---
+def _run_seasonality_batch():
+    """Background Task"""
+    global CACHE_SEASONALITY
+    result = analyze_seasonality_batch()
+    if result.get('status') == 'success':
+        CACHE_SEASONALITY = result['data']
+        print(f"✅ CACHE UPDATED: Seasonality ({len(CACHE_SEASONALITY)})")
+    else:
+        print("❌ CACHE UPDATE FAILED: Seasonality")
+
+@app.post("/main_app/update_seasonality_cache", tags=["Dividend Seasonality"])
+def api_update_seasonality_cache(background_tasks: BackgroundTasks):
+    """
+    [POST] คำนวณสถิติปันผล SET50 ทั้งหมดเก็บลง Cache (Min/Max/Avg/Countdown)
+    """
+    background_tasks.add_task(_run_seasonality_batch)
+    return {"status": "processing", "message": "Dividend seasonality analysis started in background."}
+
+
+# --- Helper เพื่อดึงข้อมูลรายตัว หรือ ทั้งหมด (SET50) ---
+def get_seasonality_from_cache(symbol_input: str):
+    if not CACHE_SEASONALITY:
+        raise HTTPException(status_code=400, detail="Cache empty. Please run POST /update_seasonality_cache first.")
+    
+    key = symbol_input.upper().replace('.BK', '')
+    
+    # กรณีดึงทั้งหมด
+    if key == 'SET50':
+        return list(CACHE_SEASONALITY.values())
+    
+    # กรณีดึงรายตัว
+    if key in CACHE_SEASONALITY:
+        return CACHE_SEASONALITY[key]
+    
+    raise HTTPException(status_code=404, detail=f"Stock '{key}' not found in cache.")
+
+
+# --- 2. GET: Statistics Line (เส้นสถิติ) ---
+@app.get("/main_app/dividend_statistics/{symbol}", tags=["Dividend Seasonality"])
+def api_dividend_stats(symbol: str):
+    """
+    [GET] ดูสถิติย้อนหลัง (Min, Max, Avg Date)
+    Input: ชื่อหุ้น (เช่น 'PTT') หรือ 'SET50'
+    """
+    raw_data = get_seasonality_from_cache(symbol)
+    
+    # ถ้าเป็น List (SET50) ให้ Loop กรองเอาเฉพาะส่วน Stats
+    if isinstance(raw_data, list):
+        output = []
+        for item in raw_data:
+            output.append({
+                "Symbol": item['Symbol'],
+                "Tag1_Stats": item.get('Tag1', {}).get('Stats') if item.get('Tag1') else None,
+                "Tag2_Stats": item.get('Tag2', {}).get('Stats') if item.get('Tag2') else None
+            })
+        return {"status": "success", "mode": "SET50", "data": output}
+    
+    # ถ้าเป็นรายตัว
+    return {
+        "status": "success",
+        "symbol": raw_data['Symbol'],
+        "Tag1_Stats": raw_data.get('Tag1', {}).get('Stats') if raw_data.get('Tag1') else None,
+        "Tag2_Stats": raw_data.get('Tag2', {}).get('Stats') if raw_data.get('Tag2') else None
+    }
+
+
+# --- 3. GET: Countdown Line (เส้นนับถอยหลัง) ---
+@app.get("/main_app/dividend_countdown/{symbol}", tags=["Dividend Seasonality"])
+def api_dividend_countdown(symbol: str):
+    """
+    [GET] ดูวันนับถอยหลัง (Countdown Days)
+    Input: ชื่อหุ้น (เช่น 'PTT') หรือ 'SET50'
+    """
+    raw_data = get_seasonality_from_cache(symbol)
+    
+    # ถ้าเป็น List (SET50) ให้ Loop กรองเอาเฉพาะส่วน Countdown
+    if isinstance(raw_data, list):
+        output = []
+        for item in raw_data:
+            output.append({
+                "Symbol": item['Symbol'],
+                "Tag1_Countdown": item.get('Tag1', {}).get('Countdown') if item.get('Tag1') else None,
+                "Tag2_Countdown": item.get('Tag2', {}).get('Countdown') if item.get('Tag2') else None
+            })
+        # เรียงลำดับตามวันที่เหลือน้อยสุด (ใกล้ปันผลสุด) ของ Tag1
+        try:
+            output.sort(key=lambda x: x['Tag1_Countdown']['Days_Remaining'] if x['Tag1_Countdown'] else 999)
+        except:
+            pass
+        return {"status": "success", "mode": "SET50", "data": output}
+    
+    # ถ้าเป็นรายตัว
+    return {
+        "status": "success",
+        "symbol": raw_data['Symbol'],
+        "Tag1_Countdown": raw_data.get('Tag1', {}).get('Countdown') if raw_data.get('Tag1') else None,
+        "Tag2_Countdown": raw_data.get('Tag2', {}).get('Countdown') if raw_data.get('Tag2') else None
     }
