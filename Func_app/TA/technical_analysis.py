@@ -1,16 +1,17 @@
 import yfinance as yf
 import pandas as pd
 import numpy as np
+from datetime import datetime, date
+from dateutil.relativedelta import relativedelta
 from Func_app.config import SET50_TICKERS
 
 # ==========================================
-# 1. Core Calculation Logic (สูตรคำนวณ)
+# 1. Core Calculation Logic (RSI & MACD)
 # ==========================================
 
 def calculate_rsi(series, period=14):
     """
-    คำนวณ RSI (Relative Strength Index)
-    สูตร: Wilder's Smoothing (Exponential)
+    คำนวณ RSI (Relative Strength Index) โดยใช้ Wilder's Smoothing
     """
     delta = series.diff()
     gain = (delta.where(delta > 0, 0))
@@ -24,8 +25,7 @@ def calculate_rsi(series, period=14):
 
 def calculate_macd(series, fast=12, slow=26, signal=9):
     """
-    คำนวณ MACD (Moving Average Convergence Divergence)
-    Return: MACD Line, Signal Line, Histogram
+    คำนวณ MACD Line, Signal Line, Histogram
     """
     ema_fast = series.ewm(span=fast, adjust=False).mean()
     ema_slow = series.ewm(span=slow, adjust=False).mean()
@@ -37,43 +37,44 @@ def calculate_macd(series, fast=12, slow=26, signal=9):
     return macd_line, signal_line, histogram
 
 # ==========================================
-# 2. Function: Get History (สำหรับกราฟรายตัว)
+# 2. Function: Get History (Single Stock Time Series)
 # ==========================================
 
-def get_technical_history(symbol: str, period: str = "1y"):
+def get_technical_history(symbol: str, start_date: str, end_date: str):
     """
     ดึงข้อมูลราคา + MACD + RSI แบบรายวัน (Time Series)
-    เหมาะสำหรับนำไปพลอตกราฟย้อนหลัง
+    ใช้สำหรับคำนวณ Batch และเป็น Fallback สำหรับ GET รายตัว
     """
     try:
-        # จัดการชื่อหุ้น
         clean_symbol = symbol.upper().replace('.BK', '')
         ticker = f"{clean_symbol}.BK"
         
-        # ดึงข้อมูลย้อนหลัง
+        # [CRITICAL STEP] เผื่อช่วงเวลา 6 เดือนก่อน start_date เพื่อให้คำนวณ MACD/RSI ได้
+        start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+        fetch_start = (start_dt - relativedelta(months=6)).strftime('%Y-%m-%d')
+        
         stock = yf.Ticker(ticker)
-        df = stock.history(period=period)
+        df = stock.history(start=fetch_start, end=end_date)
         
         if df.empty:
             return {"status": "error", "message": f"No data found for {symbol}"}
             
-        # คำนวณ Indicators (ใส่ลงไปใน DataFrame เลย)
+        # คำนวณ Indicators
         df['RSI'] = calculate_rsi(df['Close'])
         df['MACD'], df['Signal'], df['Hist'] = calculate_macd(df['Close'])
         
-        # ลบค่า NaN ช่วงต้น (ที่คำนวณ Indicator ไม่ได้)
+        # ลบค่า NaN ช่วงแรก และ กรองวันที่ตามที่ User Request (start_date ถึง end_date)
         df = df.dropna()
-        
-        # แปลงข้อมูลเป็น List of Dicts
+        df = df[df.index >= start_date]
+
         history_data = []
-        for date, row in df.iterrows():
-            # แปลงสัญญาณ MACD รายวัน (Optional)
+        for date_index, row in df.iterrows():
             signal_status = "Neutral"
             if row['Hist'] > 0: signal_status = "Bullish"
             elif row['Hist'] < 0: signal_status = "Bearish"
 
             history_data.append({
-                "Date": date.strftime('%Y-%m-%d'),
+                "Date": date_index.strftime('%Y-%m-%d'),
                 "Close": round(row['Close'], 2),
                 "RSI": round(row['RSI'], 2),
                 "MACD": round(row['MACD'], 4),
@@ -85,7 +86,6 @@ def get_technical_history(symbol: str, period: str = "1y"):
         return {
             "status": "success",
             "symbol": clean_symbol,
-            "period": period,
             "count": len(history_data),
             "data": history_data
         }
@@ -94,63 +94,34 @@ def get_technical_history(symbol: str, period: str = "1y"):
         return {"status": "error", "message": str(e)}
 
 # ==========================================
-# 3. Function: Snapshot (สำหรับตารางสรุป SET50)
+# 3. Function: Batch Analysis (สำหรับ Cache)
 # ==========================================
 
-def get_technical_snapshot(tickers: list = None):
+def analyze_technical_batch(start_year: int):
     """
-    ดึงค่า RSI/MACD ล่าสุด ของหุ้นหลายตัว (Batch)
-    เหมาะสำหรับทำตาราง Screener หรือ Dashboard หน้าแรก
+    คำนวณ MACD/RSI ของหุ้น SET50 ทั้งหมดตั้งแต่ปีเริ่มต้นจนถึงปัจจุบัน
+    ใช้สำหรับ Endpoint POST /update_indicator_cache
     """
-    target_tickers = tickers if tickers else SET50_TICKERS
-    results = []
+    target_tickers = SET50_TICKERS
+    
+    # กำหนดช่วงเวลา: 2022-01-01 จนถึงวันปัจจุบัน
+    start_date = f"{start_year}-01-01"
+    end_date = date.today().strftime('%Y-%m-%d')
+    
+    full_cache_data = {}
+    
+    print(f"Starting technical batch analysis from {start_date} to {end_date}...")
     
     for symbol in target_tickers:
-        try:
-            clean_symbol = symbol.replace('.BK', '')
-            ticker = f"{clean_symbol}.BK"
-            
-            stock = yf.Ticker(ticker)
-            # ดึงแค่ 6 เดือนก็พอสำหรับการคำนวณค่าปัจจุบัน
-            df = stock.history(period="6mo")
-            
-            if df.empty: continue
-            
-            # คำนวณ
-            df['RSI'] = calculate_rsi(df['Close'])
-            df['MACD'], df['Signal'], df['Hist'] = calculate_macd(df['Close'])
-            
-            # เอาค่าล่าสุด
-            last = df.iloc[-1]
-            prev = df.iloc[-2]
-            
-            # วิเคราะห์สัญญาณ Cross
-            macd_signal = "Neutral"
-            if last['MACD'] > last['Signal'] and prev['MACD'] <= prev['Signal']:
-                macd_signal = "Golden Cross (Buy)"
-            elif last['MACD'] < last['Signal'] and prev['MACD'] >= prev['Signal']:
-                macd_signal = "Dead Cross (Sell)"
-            
-            rsi_status = "Neutral"
-            if last['RSI'] >= 70: rsi_status = "Overbought"
-            elif last['RSI'] <= 30: rsi_status = "Oversold"
-            
-            results.append({
-                "Stock": clean_symbol,
-                "Date": last.name.strftime('%Y-%m-%d'),
-                "Close": round(last['Close'], 2),
-                "RSI": round(last['RSI'], 2),
-                "RSI_Status": rsi_status,
-                "MACD_Signal": macd_signal,
-                "MACD_Hist": round(last['Hist'], 4)
-            })
-            
-        except Exception as e:
-            print(f"Error analyzing {symbol}: {e}")
-            continue
+        # เรียกใช้ get_technical_history เพื่อคำนวณประวัติของแต่ละตัว
+        res = get_technical_history(symbol, start_date=start_date, end_date=end_date)
+        if res['status'] == 'success':
+            # เก็บผลลัพธ์ทั้งหมด (ประวัติรายวันตั้งแต่ 2022) ลงใน Dictionary Keyed by Symbol
+            full_cache_data[res['symbol']] = res['data']
             
     return {
         "status": "success",
-        "count": len(results),
-        "data": results
+        "start_date": start_date,
+        "end_date": end_date,
+        "data": full_cache_data
     }
