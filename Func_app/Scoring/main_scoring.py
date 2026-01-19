@@ -81,21 +81,38 @@ def process_cluster_and_score(
     features = ['T_DTS', 'Ret_Af_TEMA (%)', 'Ret_Bf_TEMA (%)']
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(df_model[features])
-    
+
     kmeans = KMeans(n_clusters=actual_k, random_state=42, n_init=10)
     df_model['Cluster'] = kmeans.fit_predict(X_scaled)
+    
     df_model['Total_Score (%)'] = (df_model['DY (%)'] * (1 - df_model['T_DTS'])) + df_model['Ret_Af_TEMA (%)']
 
-    cluster_names = {0: 'Rebound Star (Buy on Dip)', 1: 'Golden Goose (Strong Trend)', 2: 'Sell on Fact (Neutral)', 3: 'Dividend Trap (Avoid)'}
-    df_model['Cluster_Name'] = df_model['Cluster'].apply(lambda x: cluster_names.get(x, f"Group {x}"))
+    # --- [NEW LOGIC] Dynamic Labeling ---
+    
+    cluster_stats = df_model.groupby('Cluster')['Total_Score (%)'].mean().reset_index()
+    
+    cluster_stats = cluster_stats.sort_values(by='Total_Score (%)', ascending=False).reset_index(drop=True)
+    
+    rank_names = [
+        'Golden Goose (Strong Trend)',   # Rank 1: คะแนนรวมดีที่สุด
+        'Rebound Star (Buy on Dip)',     # Rank 2: รองลงมา (มักจะเป็นกลุ่มที่เด้งแรง)
+        'Sell on Fact (Neutral)',        # Rank 3: กลางๆ
+        'Dividend Trap (Avoid)'          # Rank 4: คะแนนแย่ที่สุด (T-DTS สูง, ราคาลงหนัก)
+    ]
+    
+    cluster_mapping = {}
+    for rank, row in cluster_stats.iterrows():
+        cluster_id = row['Cluster']
+        # ป้องกันกรณี k_clusters น้อยกว่า 4 (เผื่อข้อมูลน้อย)
+        name = rank_names[rank] if rank < len(rank_names) else f"Group {rank+1}"
+        cluster_mapping[cluster_id] = name
 
-    # Return ทั้งผลลัพธ์ Scoring และข้อมูลดิบของ T-DTS / TEMA
+    df_model['Cluster_Name'] = df_model['Cluster'].map(cluster_mapping)
     return {
         "status": "success",
         "params": {"start": start_year, "end": end_year, "k": actual_k},
         "count": len(df_model),
         "data": df_model.sort_values(by='Total_Score (%)', ascending=False).to_dict(orient='records'),
-        # [KEY CHANGE] ส่ง Raw Data ออกไป Cache
         "raw_tdts": raw_tdts_all,
         "raw_tema": raw_tema_all
     }
