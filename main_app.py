@@ -8,16 +8,41 @@ import pandas as pd
 # --- Local Modules (Logic) ---
 from Func_app.config import SET50_TICKERS
 from Func_app.calculate_text import optimize_dividend_tax 
-from Func_app.Scoring.t_dts_socring import analyze_stock_tdts
-from Func_app.Scoring.tema_socring import analyze_stock_tema
+from Func_app.Scoring.tdts_scoring import analyze_stock_tdts
+from Func_app.Scoring.tema_scoring import analyze_stock_tema
 from Func_app.Scoring.main_scoring import process_cluster_and_score
 from Func_app.TA.technical_analysis import analyze_technical_batch
 from Func_app.Predictor.predictor_XD import analyze_seasonality_batch
 
+
+tags_metadata = [
+    {
+        "name": "General",
+        "description": "Health Check & Utilities",
+    },
+    {
+        "name": "Scoring(tdts+tema) & Clustering", 
+        "description": "Batch Analysis and Portfolio Clustering",
+    },
+    {
+        "name": "Individual Metrics(T-DTS & TEMA)",
+        "description": "Analyze specific stocks metrics",
+    },
+    {
+        "name": "Dividend Seasonality(pred_XD)",
+        "description": "Prediction of XD dates and Stats",
+    },
+    {
+        "name": "Technical Analysis(macd+rsi)",
+        "description": "Historical Technical Indicators",
+    },
+]
+
 app = FastAPI(
     title="Stock Analysis API",
     description="API for SET50 Stock Analysis: Scoring, Clustering, T-DTS, TEMA, and Technical Indicators",
-    version="1.0.0"
+    version="1.0.0",
+    openapi_tags=tags_metadata 
 )
 
 # ======================================================
@@ -39,7 +64,7 @@ class TaxInput(BaseModel):
 
 class BatchInput(BaseModel):
     start_year: int = Field(2022, description="Start Year")
-    end_year: int = Field(2024, description="End Year")
+    end_year: int = Field(2026, description="End Year")
     window: int = Field(15, description="TEMA Window")
     threshold: float = Field(20.0, description="Outlier Threshold (%)")
 
@@ -74,9 +99,9 @@ def api_calculate_tax(payload: TaxInput):
     )
 
 # ======================================================
-# 4. SCORING & CLUSTERING (Batch & Get)
+# 4. SCORING(tdts+tema) & CLUSTERING (Batch & Get)
 # ======================================================
-@app.post("/main_app/update_scoring_cache", tags=["Scoring & Clustering"])
+@app.post("/main_app/update_scoring_cache", tags=["Scoring(tdts+tema) & Clustering"])
 def api_update_scoring_cache(payload: BatchInput, background_tasks: BackgroundTasks):
     """
     [POST] Trigger Background Task to calculate Scores & Clusters for ALL SET50 stocks.
@@ -87,7 +112,7 @@ def api_update_scoring_cache(payload: BatchInput, background_tasks: BackgroundTa
         "message": "Scoring batch analysis started in background."
     }
 
-@app.get("/main_app/stock_recommendation/{symbol}", tags=["Scoring & Clustering"])
+@app.get("/main_app/stock_recommendation/{symbol}", tags=["Scoring(tdts+tema) & Clustering"])
 def api_get_stock_score(symbol: str):
     """
     [GET] Retrieve Score & Cluster for a stock (or 'SET50' for all).
@@ -111,9 +136,99 @@ def api_get_stock_score(symbol: str):
     raise HTTPException(status_code=404, detail=f"Stock '{stock_key}' not found.")
 
 # ======================================================
-# 5. TECHNICAL ANALYSIS (Batch & Get)
+# 5. INDIVIDUAL METRICS (T-DTS & TEMA) (ย้ายมาไว้ตรงนี้ตามลำดับ)
 # ======================================================
-@app.post("/main_app/update_indicator_cache", tags=["Technical Analysis"])
+@app.get("/main_app/analyze_tdts/{input_stock}", tags=["Individual Metrics(T-DTS & TEMA)"])
+def api_analyze_tdts(input_stock: str, threshold: float = 20.0, start_year: int = 2022, end_year: int = 2026):
+    """Get T-DTS Analysis (Cache -> Live Fallback)"""
+    stock_key = input_stock.upper().replace('.BK', '')
+    
+    if stock_key in CACHE_TDTS:
+        return _format_cache_response(stock_key, CACHE_TDTS[stock_key], threshold, score_col='T-DTS')
+    
+    return analyze_stock_tdts(input_stock, start_year, end_year, threshold)
+
+@app.get("/main_app/analyze_tema/{input_stock}", tags=["Individual Metrics(T-DTS & TEMA)"])
+def api_analyze_tema(input_stock: str, threshold: float = 20.0, start_year: int = 2022, end_year: int = 2026, window: int = 15):
+    """Get TEMA Analysis (Cache -> Live Fallback)"""
+    stock_key = input_stock.upper().replace('.BK', '')
+    
+    if stock_key in CACHE_TEMA:
+        # TEMA logic checks both Bf and Af columns
+        return _format_cache_response(stock_key, CACHE_TEMA[stock_key], threshold, score_col='TEMA_Multi')
+        
+    return analyze_stock_tema([input_stock], start_year, end_year, threshold, window)
+
+# ======================================================
+# 6. DIVIDEND SEASONALITY (pred_XD) (ย้ายมาไว้ตรงนี้ตามลำดับ)
+# ======================================================
+@app.post("/main_app/update_seasonality_cache", tags=["Dividend Seasonality(pred_XD)"])
+def api_update_seasonality_cache(background_tasks: BackgroundTasks):
+    """
+    [POST] คำนวณสถิติปันผล SET50 ทั้งหมดเก็บลง Cache (Min/Max/Avg/Countdown)
+    """
+    background_tasks.add_task(_run_seasonality_batch)
+    return {"status": "processing", "message": "Dividend seasonality analysis started in background."}
+
+@app.get("/main_app/dividend_statistics/{symbol}", tags=["Dividend Seasonality(pred_XD)"])
+def api_dividend_stats(symbol: str):
+    """
+    [GET] ดูสถิติย้อนหลัง (Min, Max, Avg Date)
+    Input: ชื่อหุ้น (เช่น 'PTT') หรือ 'SET50'
+    """
+    raw_data = get_seasonality_from_cache(symbol)
+    
+    if isinstance(raw_data, list):
+        output = []
+        for item in raw_data:
+            output.append({
+                "Symbol": item['Symbol'],
+                "Tag1_Stats": item.get('Tag1', {}).get('Stats') if item.get('Tag1') else None,
+                "Tag2_Stats": item.get('Tag2', {}).get('Stats') if item.get('Tag2') else None
+            })
+        return {"status": "success", "mode": "SET50", "data": output}
+    
+    return {
+        "status": "success",
+        "symbol": raw_data['Symbol'],
+        "Tag1_Stats": raw_data.get('Tag1', {}).get('Stats') if raw_data.get('Tag1') else None,
+        "Tag2_Stats": raw_data.get('Tag2', {}).get('Stats') if raw_data.get('Tag2') else None
+    }
+
+@app.get("/main_app/dividend_countdown/{symbol}", tags=["Dividend Seasonality(pred_XD)"])
+def api_dividend_countdown(symbol: str):
+    """
+    [GET] ดูวันนับถอยหลัง (Countdown Days)
+    Input: ชื่อหุ้น (เช่น 'PTT') หรือ 'SET50'
+    """
+    raw_data = get_seasonality_from_cache(symbol)
+    
+    if isinstance(raw_data, list):
+        output = []
+        for item in raw_data:
+            output.append({
+                "Symbol": item['Symbol'],
+                "Tag1_Countdown": item.get('Tag1', {}).get('Countdown') if item.get('Tag1') else None,
+                "Tag2_Countdown": item.get('Tag2', {}).get('Countdown') if item.get('Tag2') else None
+            })
+        try:
+            output.sort(key=lambda x: x['Tag1_Countdown']['Days_Remaining'] if x['Tag1_Countdown'] else 999)
+        except:
+            pass
+        return {"status": "success", "mode": "SET50", "data": output}
+    
+    # ถ้าเป็นรายตัว
+    return {
+        "status": "success",
+        "symbol": raw_data['Symbol'],
+        "Tag1_Countdown": raw_data.get('Tag1', {}).get('Countdown') if raw_data.get('Tag1') else None,
+        "Tag2_Countdown": raw_data.get('Tag2', {}).get('Countdown') if raw_data.get('Tag2') else None
+    }
+
+# ======================================================
+# 7. TECHNICAL ANALYSIS (macd+rsi) (ย้ายมาไว้ตรงนี้ตามลำดับ)
+# ======================================================
+@app.post("/main_app/update_indicator_cache", tags=["Technical Analysis(macd+rsi)"])
 def api_update_indicator_cache(payload: TechnicalBatchInput, background_tasks: BackgroundTasks):
     """
     [POST] Trigger Background Task to calculate MACD/RSI for ALL SET50 stocks.
@@ -124,7 +239,7 @@ def api_update_indicator_cache(payload: TechnicalBatchInput, background_tasks: B
         "message": f"Technical analysis started from {payload.start_year} in background."
     }
 
-@app.get("/main_app/technical_history/{symbol}", tags=["Technical Analysis"])
+@app.get("/main_app/technical_history/{symbol}", tags=["Technical Analysis(macd+rsi)"])
 def api_get_technical_history(symbol: str):
     """
     [GET] Retrieve 1-Year Historical Technical Data (MACD/RSI) from Cache.
@@ -143,31 +258,6 @@ def api_get_technical_history(symbol: str):
         "status": "success", "symbol": stock_key, "source": "cache",
         "period": "1 year", "data": filtered_data
     }
-
-# ======================================================
-# 6. INDIVIDUAL METRICS (T-DTS & TEMA)
-# ======================================================
-@app.get("/main_app/analyze_tdts/{input_stock}", tags=["Individual Metrics"])
-def api_analyze_tdts(input_stock: str, threshold: float = 20.0, start_year: int = 2022, end_year: int = 2024):
-    """Get T-DTS Analysis (Cache -> Live Fallback)"""
-    stock_key = input_stock.upper().replace('.BK', '')
-    
-    if stock_key in CACHE_TDTS:
-        return _format_cache_response(stock_key, CACHE_TDTS[stock_key], threshold, score_col='T-DTS')
-    
-    return analyze_stock_tdts(input_stock, start_year, end_year, threshold)
-
-@app.get("/main_app/analyze_tema/{input_stock}", tags=["Individual Metrics"])
-def api_analyze_tema(input_stock: str, threshold: float = 20.0, start_year: int = 2022, end_year: int = 2024, window: int = 15):
-    """Get TEMA Analysis (Cache -> Live Fallback)"""
-    stock_key = input_stock.upper().replace('.BK', '')
-    
-    if stock_key in CACHE_TEMA:
-        # TEMA logic checks both Bf and Af columns
-        return _format_cache_response(stock_key, CACHE_TEMA[stock_key], threshold, score_col='TEMA_Multi')
-        
-    return analyze_stock_tema([input_stock], start_year, end_year, threshold, window)
-
 
 # ======================================================
 # INTERNAL HELPER FUNCTIONS (Background Tasks & Utils)
@@ -233,12 +323,6 @@ def _format_cache_response(stock_key, raw_data, threshold, score_col):
         }
     }
 
-
-# ======================================================
-# DIVIDEND SEASONALITY ENDPOINTS
-# ======================================================
-
-# --- 1. POST: Update Cache (เส้นเดียวจบ) ---
 def _run_seasonality_batch():
     """Background Task"""
     global CACHE_SEASONALITY
@@ -249,91 +333,16 @@ def _run_seasonality_batch():
     else:
         print("❌ CACHE UPDATE FAILED: Seasonality")
 
-@app.post("/main_app/update_seasonality_cache", tags=["Dividend Seasonality"])
-def api_update_seasonality_cache(background_tasks: BackgroundTasks):
-    """
-    [POST] คำนวณสถิติปันผล SET50 ทั้งหมดเก็บลง Cache (Min/Max/Avg/Countdown)
-    """
-    background_tasks.add_task(_run_seasonality_batch)
-    return {"status": "processing", "message": "Dividend seasonality analysis started in background."}
-
-
-# --- Helper เพื่อดึงข้อมูลรายตัว หรือ ทั้งหมด (SET50) ---
 def get_seasonality_from_cache(symbol_input: str):
     if not CACHE_SEASONALITY:
         raise HTTPException(status_code=400, detail="Cache empty. Please run POST /update_seasonality_cache first.")
     
     key = symbol_input.upper().replace('.BK', '')
     
-    # กรณีดึงทั้งหมด
     if key == 'SET50':
         return list(CACHE_SEASONALITY.values())
     
-    # กรณีดึงรายตัว
     if key in CACHE_SEASONALITY:
         return CACHE_SEASONALITY[key]
     
     raise HTTPException(status_code=404, detail=f"Stock '{key}' not found in cache.")
-
-
-# --- 2. GET: Statistics Line (เส้นสถิติ) ---
-@app.get("/main_app/dividend_statistics/{symbol}", tags=["Dividend Seasonality"])
-def api_dividend_stats(symbol: str):
-    """
-    [GET] ดูสถิติย้อนหลัง (Min, Max, Avg Date)
-    Input: ชื่อหุ้น (เช่น 'PTT') หรือ 'SET50'
-    """
-    raw_data = get_seasonality_from_cache(symbol)
-    
-    # ถ้าเป็น List (SET50) ให้ Loop กรองเอาเฉพาะส่วน Stats
-    if isinstance(raw_data, list):
-        output = []
-        for item in raw_data:
-            output.append({
-                "Symbol": item['Symbol'],
-                "Tag1_Stats": item.get('Tag1', {}).get('Stats') if item.get('Tag1') else None,
-                "Tag2_Stats": item.get('Tag2', {}).get('Stats') if item.get('Tag2') else None
-            })
-        return {"status": "success", "mode": "SET50", "data": output}
-    
-    # ถ้าเป็นรายตัว
-    return {
-        "status": "success",
-        "symbol": raw_data['Symbol'],
-        "Tag1_Stats": raw_data.get('Tag1', {}).get('Stats') if raw_data.get('Tag1') else None,
-        "Tag2_Stats": raw_data.get('Tag2', {}).get('Stats') if raw_data.get('Tag2') else None
-    }
-
-
-# --- 3. GET: Countdown Line (เส้นนับถอยหลัง) ---
-@app.get("/main_app/dividend_countdown/{symbol}", tags=["Dividend Seasonality"])
-def api_dividend_countdown(symbol: str):
-    """
-    [GET] ดูวันนับถอยหลัง (Countdown Days)
-    Input: ชื่อหุ้น (เช่น 'PTT') หรือ 'SET50'
-    """
-    raw_data = get_seasonality_from_cache(symbol)
-    
-    # ถ้าเป็น List (SET50) ให้ Loop กรองเอาเฉพาะส่วน Countdown
-    if isinstance(raw_data, list):
-        output = []
-        for item in raw_data:
-            output.append({
-                "Symbol": item['Symbol'],
-                "Tag1_Countdown": item.get('Tag1', {}).get('Countdown') if item.get('Tag1') else None,
-                "Tag2_Countdown": item.get('Tag2', {}).get('Countdown') if item.get('Tag2') else None
-            })
-        # เรียงลำดับตามวันที่เหลือน้อยสุด (ใกล้ปันผลสุด) ของ Tag1
-        try:
-            output.sort(key=lambda x: x['Tag1_Countdown']['Days_Remaining'] if x['Tag1_Countdown'] else 999)
-        except:
-            pass
-        return {"status": "success", "mode": "SET50", "data": output}
-    
-    # ถ้าเป็นรายตัว
-    return {
-        "status": "success",
-        "symbol": raw_data['Symbol'],
-        "Tag1_Countdown": raw_data.get('Tag1', {}).get('Countdown') if raw_data.get('Tag1') else None,
-        "Tag2_Countdown": raw_data.get('Tag2', {}).get('Countdown') if raw_data.get('Tag2') else None
-    }
