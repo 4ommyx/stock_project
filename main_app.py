@@ -6,13 +6,14 @@ from dateutil.relativedelta import relativedelta
 import pandas as pd
 
 # --- Local Modules (Logic) ---
-from Func_app.config import SET50_TICKERS
+# from Func_app.config import SET50_TICKERS
 from Func_app.calculate_text import optimize_dividend_tax 
 from Func_app.Scoring.tdts_scoring import analyze_stock_tdts
 from Func_app.Scoring.tema_scoring import analyze_stock_tema
 from Func_app.Scoring.main_scoring import process_cluster_and_score
 from Func_app.TA.technical_analysis import analyze_technical_batch
 from Func_app.Predictor.predictor_XD import analyze_seasonality_batch
+from Func_app.GGM.ggm_cal import analyze_ggm_batch
 
 
 tags_metadata = [
@@ -31,6 +32,10 @@ tags_metadata = [
     {
         "name": "Dividend Seasonality(pred_XD)",
         "description": "Prediction of XD dates and Stats",
+    },
+    {
+        "name": "Valuation (GGM)",
+        "description": "Dividend Discount Model Valuation",
     },
     {
         "name": "Technical Analysis(macd+rsi)",
@@ -53,6 +58,7 @@ CACHE_TDTS: Dict[str, list] = {}      # T-DTS Raw History
 CACHE_TEMA: Dict[str, list] = {}      # TEMA Raw History
 TECHNICAL_CACHE: Dict[str, list] = {} # MACD/RSI Historical Data
 CACHE_SEASONALITY: Dict[str, dict] = {} # Seasonality Analysis
+CACHE_GGM: Dict[str, dict] = {}
 
 # ======================================================
 # 2. PYDANTIC MODELS (Request Schemas)
@@ -71,6 +77,12 @@ class BatchInput(BaseModel):
 class TechnicalBatchInput(BaseModel):
     start_year: int = Field(2022, description="Start Year for Technical Data")
 
+class GGMInput(BaseModel):
+    tickers: Optional[List[str]] = Field(default=None, description="List of tickers (Empty = All SET50)")
+    years: int = Field(3, description="Projection Years")
+    r_expected: float = Field(0.10, description="Expected Return")
+    growth_rate: float = Field(0.04, description="Growth Rate")
+
 # ======================================================
 # 3. GENERAL ENDPOINTS
 # ======================================================
@@ -85,7 +97,8 @@ def home():
             "tdts_count": len(CACHE_TDTS),
             "tema_count": len(CACHE_TEMA),
             "technical_count": len(TECHNICAL_CACHE),
-            "seasonality_count": len(CACHE_SEASONALITY)
+            "seasonality_count": len(CACHE_SEASONALITY),
+            "ggm_count": len(CACHE_GGM)  
         }
     }
 
@@ -172,10 +185,7 @@ def api_update_seasonality_cache(background_tasks: BackgroundTasks):
 
 @app.get("/main_app/dividend_statistics/{symbol}", tags=["Dividend Seasonality(pred_XD)"])
 def api_dividend_stats(symbol: str):
-    """
-    [GET] ดูสถิติย้อนหลัง (Min, Max, Avg Date)
-    Input: ชื่อหุ้น (เช่น 'PTT') หรือ 'SET50'
-    """
+
     raw_data = get_seasonality_from_cache(symbol)
     
     if isinstance(raw_data, list):
@@ -258,6 +268,57 @@ def api_get_technical_history(symbol: str):
         "status": "success", "symbol": stock_key, "source": "cache",
         "period": "1 year", "data": filtered_data
     }
+
+# ======================================================
+# 8. VALUATION (GGM)
+# ======================================================
+
+@app.post("/main_app/update_ggm_cache", tags=["Valuation (GGM)"])
+def api_update_ggm_cache(payload: GGMInput, background_tasks: BackgroundTasks):
+    """
+    [POST] Trigger Background Task to calculate GGM Valuation for ALL SET50 stocks.
+    """
+    # Force tickers to None to ensure ALL SET50 calculation
+    task_payload = payload.model_dump()
+    task_payload['tickers'] = None
+
+    background_tasks.add_task(_run_ggm_batch_task, payload_dict=task_payload)
+
+    return {
+        "status": "processing", 
+        "message": f"GGM Valuation analysis started (Years={payload.years}) for ALL SET50 in background."
+    }
+
+@app.get("/main_app/valuation_ggm/{symbol}", tags=["Valuation (GGM)"])
+def api_get_ggm_result(symbol: str):
+    """
+    [GET] ดึงผล GGM จาก Cache
+    - symbol: ใส่ชื่อหุ้น (เช่น 'ADVANC') หรือ 'SET50' เพื่อดูทั้งหมด
+    """
+    if not CACHE_GGM:
+        raise HTTPException(status_code=400, detail="Cache empty. Please run POST /update_ggm_cache first.")
+    
+    symbol_upper = symbol.upper().replace('.BK', '')
+    
+    if symbol_upper == 'SET50':
+        all_results = list(CACHE_GGM.values())
+        all_results.sort(key=lambda x: x['Diff_Percent'], reverse=True)
+        return {
+            "status": "success", 
+            "source": "cache", 
+            "count": len(all_results), 
+            "data": all_results
+        }
+    
+
+    if symbol_upper in CACHE_GGM:
+        return {
+            "status": "success", 
+            "source": "cache", 
+            "data": CACHE_GGM[symbol_upper]
+        }
+    
+    raise HTTPException(status_code=404, detail=f"Stock '{symbol_upper}' not found in cache.")
 
 # ======================================================
 # INTERNAL HELPER FUNCTIONS (Background Tasks & Utils)
@@ -346,3 +407,29 @@ def get_seasonality_from_cache(symbol_input: str):
         return CACHE_SEASONALITY[key]
     
     raise HTTPException(status_code=404, detail=f"Stock '{key}' not found in cache.")
+
+def _run_ggm_batch_task(payload_dict: Dict):
+    """Background Task: Run GGM Calculation & Update Cache"""
+    global CACHE_GGM
+    
+    
+    print(f"🔄 Starting GGM Calculation...")
+    
+    try:
+        results_list = analyze_ggm_batch(
+            tickers=payload_dict.get('tickers'),
+            years=payload_dict.get('years', 3),
+            r_expected=payload_dict.get('r_expected', 0.10),
+            growth_rate=payload_dict.get('growth_rate', 0.04)
+        )
+        
+        new_cache = {}
+        for item in results_list:
+            stock_key = item['Symbol'].upper().replace('.BK', '')
+            new_cache[stock_key] = item
+            
+        CACHE_GGM = new_cache
+        print(f"✅ CACHE UPDATED: GGM Valuation ({len(CACHE_GGM)} stocks)")
+        
+    except Exception as e:
+        print(f"❌ GGM CALCULATION FAILED: {str(e)}")
