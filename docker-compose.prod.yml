@@ -1,0 +1,11 @@
+services:
+  analytic-ml:
+    build: 
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: analytic-ml-prod
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - NODE_ENV=production

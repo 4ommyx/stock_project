@@ -1,0 +1,12 @@
+services:
+  analytic-ml:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: analytic-ml-dev
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    environment:
+      - NODE_ENV=development
