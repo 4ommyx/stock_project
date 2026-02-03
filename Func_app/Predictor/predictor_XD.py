@@ -1,7 +1,7 @@
 import yfinance as yf
 import pandas as pd
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta # [เพิ่ม] timedelta
 from Func_app.config import SET50_TICKERS
 
 # --- Helper Functions ---
@@ -9,7 +9,6 @@ from Func_app.config import SET50_TICKERS
 def dayofyear_to_str(doy, year=2000):
     if pd.isna(doy): return None
     base = pd.Timestamp(f'{year}-01-01')
-    # Format DD/MM (เช่น 15/04)
     return (base + pd.to_timedelta(int(round(doy))-1, unit='D')).strftime('%d/%m')
 
 def tag_dividends_per_year(df_div):
@@ -32,7 +31,6 @@ def tag_dividends_per_year(df_div):
 def calculate_days_to_dividend(avg_month_day_str):
     """
     คำนวณวันนับถอยหลัง และ วันที่ที่จะถึง (ISO Format)
-    Return: (days_remaining, next_date_iso_string)
     """
     if not avg_month_day_str: return None, None
     
@@ -40,15 +38,15 @@ def calculate_days_to_dividend(avg_month_day_str):
     current_year = current_date.year
     
     try:
-
+        # Input format: DD/MM (e.g., 15/04)
         target_date = datetime.strptime(f"{current_year}/{avg_month_day_str}", "%Y/%d/%m")
         
+        # ถ้าวันที่ของปีนี้ผ่านไปแล้ว ให้นับเป็นปีหน้า
         if target_date < current_date:
             target_date = datetime.strptime(f"{current_year + 1}/{avg_month_day_str}", "%Y/%d/%m")
             
         diff = (target_date - current_date).days
         
-
         return diff, target_date.strftime('%Y-%m-%d')
         
     except ValueError:
@@ -62,6 +60,7 @@ def analyze_stock_seasonality(symbol: str):
         ticker = f"{clean_symbol}.BK"
         
         stock = yf.Ticker(ticker)
+        # ดึง 5 ปี เพื่อหาค่าเฉลี่ย
         hist = stock.history(period="5y") 
         
         if hist.empty:
@@ -79,17 +78,34 @@ def analyze_stock_seasonality(symbol: str):
             subset = tagged_df[tagged_df['tag'] == t].copy()
             
             if not subset.empty:
-                # แปลง Index เป็น Series ก่อนคำนวณ .mean() (กัน Error)
+                # 1. หาค่าเฉลี่ยวันที่ (XD Date)
                 doy_values = subset.index.dayofyear
                 doy_series = pd.Series(doy_values) 
                 
-                # คำนวณค่าเฉลี่ย
                 avg_str = dayofyear_to_str(doy_series.mean())
                 min_str = dayofyear_to_str(doy_series.min())
                 max_str = dayofyear_to_str(doy_series.max())
                 
+                # 2. คำนวณวันที่ XD ถัดไป (Predicted XD)
                 days_remaining, next_date_iso = calculate_days_to_dividend(avg_str)
                 
+                # ======================================================
+                # [NEW] คำนวณเงินปันผล + วันจ่ายเงิน (Pay Date)
+                # ======================================================
+                
+                # A. หาค่าเฉลี่ยเงินปันผล (Avg Dividend)
+                avg_dividend_amt = subset['Dividends'].mean()
+                
+                # B. ประมาณการวันจ่ายเงิน (Estimated Pay Date)
+                # ปกติหุ้นไทยจ่ายเงินหลัง XD ประมาณ 15-20 วัน -> ใช้ค่ากลางคือ +18 วัน
+                est_pay_date_iso = None
+                if next_date_iso:
+                    xd_date_obj = datetime.strptime(next_date_iso, "%Y-%m-%d")
+                    pay_date_obj = xd_date_obj + timedelta(days=18)
+                    est_pay_date_iso = pay_date_obj.strftime("%Y-%m-%d")
+
+                # ======================================================
+
                 result_data[f'Tag{t}'] = {
                     "Stats": {
                         "Min_Date": min_str,
@@ -98,9 +114,13 @@ def analyze_stock_seasonality(symbol: str):
                         "Data_Points": len(subset)
                     },
                     "Countdown": {
-                        "Avg_Date": avg_str,      # วันที่เฉลี่ย (DD/MM)
-                        "Next_Date": next_date_iso, 
-                        "Days_Remaining": days_remaining
+                        "Avg_Date": avg_str,          # วัน XD เฉลี่ย (DD/MM)
+                        "Next_XD_Date": next_date_iso, # วัน XD ที่คาดการณ์ (YYYY-MM-DD)
+                        "Days_Remaining": days_remaining,
+                        
+                        # [NEW] ข้อมูลใหม่สำหรับ UI
+                        "Est_Dividend_Baht": round(avg_dividend_amt, 4), # เงินปันผล (บาท)
+                        "Est_Pay_Date": est_pay_date_iso                 # วันจ่ายเงิน (YYYY-MM-DD)
                     }
                 }
             else:
