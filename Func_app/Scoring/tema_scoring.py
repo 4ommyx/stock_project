@@ -15,6 +15,7 @@ def analyze_stock_tema(tickers: list = None, start_year: int = 2022, end_year: i
     """
     target_tickers = tickers if tickers else SET50_TICKERS
     all_data = []
+    window = int(window)
 
     for symbol in target_tickers:
         try:
