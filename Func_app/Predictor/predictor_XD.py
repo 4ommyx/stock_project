@@ -93,8 +93,9 @@ def analyze_stock_seasonality(symbol: str):
                 # [NEW] คำนวณเงินปันผล + วันจ่ายเงิน (Pay Date)
                 # ======================================================
                 
-                # A. หาค่าเฉลี่ยเงินปันผล (Avg Dividend)
-                avg_dividend_amt = subset['Dividends'].mean()
+                # lass dividend amount
+                last_dividend_amt = subset['Dividends'][-1]
+                
                 
                 # B. ประมาณการวันจ่ายเงิน (Estimated Pay Date)
                 # ปกติหุ้นไทยจ่ายเงินหลัง XD ประมาณ 15-20 วัน -> ใช้ค่ากลางคือ +18 วัน
@@ -118,8 +119,7 @@ def analyze_stock_seasonality(symbol: str):
                         "Next_XD_Date": next_date_iso, # วัน XD ที่คาดการณ์ (YYYY-MM-DD)
                         "Days_Remaining": days_remaining,
                         
-                        # [NEW] ข้อมูลใหม่สำหรับ UI
-                        "Est_Dividend_Baht": round(avg_dividend_amt, 4), # เงินปันผล (บาท)
+                        "Est_Dividend_Baht": round(last_dividend_amt, 4), # เงินปันผล (บาท)
                         "Est_Pay_Date": est_pay_date_iso                 # วันจ่ายเงิน (YYYY-MM-DD)
                     }
                 }
