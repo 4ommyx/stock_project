@@ -80,7 +80,7 @@ class TechnicalBatchInput(BaseModel):
 class GGMInput(BaseModel):
     tickers: Optional[List[str]] = Field(default=None, description="List of tickers (Empty = All SET50)")
     years: int = Field(3, description="Projection Years")
-    r_expected: float = Field(0.10, description="Expected Return")
+    r_expected: float = Field(0.05, description="Expected Return")
     growth_rate: float = Field(0.04, description="Growth Rate")
 
 # ======================================================
