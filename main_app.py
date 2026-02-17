@@ -419,7 +419,7 @@ def _run_ggm_batch_task(payload_dict: Dict):
         results_list = analyze_ggm_batch(
             tickers=payload_dict.get('tickers'),
             years=payload_dict.get('years', 3),
-            r_expected=payload_dict.get('r_expected', 0.10),
+            r_expected=payload_dict.get('r_expected', 0.05),
             growth_rate=payload_dict.get('growth_rate', 0.04)
         )
         
