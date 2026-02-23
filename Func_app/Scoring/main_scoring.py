@@ -95,10 +95,10 @@ def process_cluster_and_score(
     # ==============================================================================
 
     ideal_profiles = {
-        'Rebound Star (Buy on Dip)':    np.array([-0.5,  1.0,  1.0]), 
-        'Golden Goose (Strong Trend)':  np.array([-1.0,  2.0, -2.0]), 
-        'Dividend Trap (Avoid)':        np.array([ 2.5, -3.0, -3.0]), 
-        'Sell on Fact (Neutral)':       np.array([ 0.0, -2.0,  1.0])  
+        'Golden Goose (Strong Trend)':    np.array([-0.5,  1.0,  1.0]),
+        'Rebound Star (Buy on Dip)':  np.array([-1.0,  1.0, -1.0]),
+        'Dividend Trap (Avoid)':        np.array([ 2.5, -3.0, -3.0]),
+        'Sell on Fact (Neutral)':       np.array([ 0.0, -1.0,  1.0])
     }
     
     profile_names = list(ideal_profiles.keys())
