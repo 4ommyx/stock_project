@@ -24,7 +24,7 @@ def process_cluster_and_score(
     tdts_list_for_model = [] 
     
     for stock in target_tickers:
-        res = analyze_stock_tdts(stock, start_year, end_year, threshold=20) 
+        res = analyze_stock_tdts(stock, start_year, end_year, threshold=threshold) 
         if res.get('status') == 'success':
             raw_tdts_all.extend(res['data']['raw_data'])
             tdts_list_for_model.extend(res['data']['clean_data'])
@@ -42,24 +42,34 @@ def process_cluster_and_score(
     
     if res_tema.get('status') == 'error': return res_tema
 
-    raw_tema_all = res_tema['data']['raw_data']
-    df_tema = pd.DataFrame(res_tema['data']['clean_data'])
-    
+    raw_tema_all = res_tema['data'].get('raw_data', [])
+    # prefer clean_data if present, otherwise fall back to raw_data
+    tema_records = res_tema['data'].get('clean_data') or res_tema['data'].get('raw_data') or []
+    df_tema = pd.DataFrame(tema_records)
+
     if df_tema.empty:
         return {"status": "error", "message": "No TEMA data found."}
 
     # --- Step 3: Merge Data ---
     df_tdts['Stock'] = df_tdts['Stock'].str.replace('.BK', '').str.upper()
     df_tema['Stock'] = df_tema['Stock'].str.replace('.BK', '').str.upper()
-    df_tdts['Ex_Date'] = pd.to_datetime(df_tdts['Ex_Date'])
-    df_tema['Ex_Date'] = pd.to_datetime(df_tema['Ex_Date'])
 
     df_tdts = df_tdts.rename(columns={'DY_percent': 'DY (%)', 'T-DTS': 'T_DTS'})
+    # normalize possible column names from tema
     if 'Ret_Bf_TEMA_Percent' in df_tema.columns:
         df_tema = df_tema.rename(columns={'Ret_Bf_TEMA_Percent': 'Ret_Bf_TEMA (%)', 'Ret_Af_TEMA_Percent': 'Ret_Af_TEMA (%)'})
 
-    df_merged = pd.merge(df_tdts, df_tema[['Stock', 'Ex_Date', 'Ret_Bf_TEMA (%)', 'Ret_Af_TEMA (%)']], on=['Stock', 'Ex_Date'], how='inner')
-    if df_merged.empty: return {"status": "error", "message": "Merged data is empty."}
+    # If tema data contains per-XD rows with Ex_Date, merge on Stock+Ex_Date
+    if 'Ex_Date' in df_tema.columns:
+        df_tdts['Ex_Date'] = pd.to_datetime(df_tdts['Ex_Date'])
+        df_tema['Ex_Date'] = pd.to_datetime(df_tema['Ex_Date'])
+        df_merged = pd.merge(df_tdts, df_tema[['Stock', 'Ex_Date', 'Ret_Bf_TEMA (%)', 'Ret_Af_TEMA (%)']], on=['Stock', 'Ex_Date'], how='inner')
+    else:
+        # tema returned aggregated per-stock (no Ex_Date) — merge on Stock only
+        df_merged = pd.merge(df_tdts, df_tema[['Stock', 'Ret_Bf_TEMA (%)', 'Ret_Af_TEMA (%)']].drop_duplicates(subset=['Stock']), on=['Stock'], how='left')
+
+    if df_merged.empty:
+        return {"status": "error", "message": "Merged data is empty."}
 
     # --- Step 4: Clustering ---
     df_agg = df_merged.groupby('Stock').aggregate({

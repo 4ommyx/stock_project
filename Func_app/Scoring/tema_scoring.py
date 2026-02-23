@@ -87,24 +87,40 @@ def analyze_stock_tema(tickers: list = None, start_year: int = 2022, end_year: i
     if not all_data:
         return {"status": "error", "message": "No data found or insufficient history"}
 
-    # จัดการ Outlier
+    # สร้าง DataFrame ดิบจากทุก XD
     df = pd.DataFrame(all_data)
     df = df.sort_values(by=['Stock', 'Ex_Date'], ascending=[True, False])
 
-    is_outlier = (df['Ret_Bf_TEMA (%)'].abs() > threshold) | (df['Ret_Af_TEMA (%)'].abs() > threshold)
-    
-    # [UPDATED] Return 3 ส่วน: Raw, Clean, Unclean (เปลี่ยนชื่อจาก outliers เป็น unclean_data)
+    # --- Aggregate per stock (mean across all XD events) ---
+    agg = df.groupby('Stock').aggregate({
+        'Ret_Bf_TEMA (%)': 'mean',
+        'Ret_Af_TEMA (%)': 'mean',
+        'DPS': 'mean',
+        'Price_TEMA': 'mean'
+    }).reset_index()
+
+    # รอบคัดกรอง (filter) ใช้ threshold บนค่าที่ aggregated แล้ว
+    is_outlier_agg = (agg['Ret_Bf_TEMA (%)'].abs() > threshold) | (agg['Ret_Af_TEMA (%)'].abs() > threshold)
+
+    clean_agg = agg[~is_outlier_agg].copy()
+    unclean_agg = agg[is_outlier_agg].copy()
+
+    # เตรียมผลลัพธ์เป็น dicts
+    raw_records = df.to_dict(orient='records')
+    clean_records = clean_agg.round(4).to_dict(orient='records')
+    unclean_records = unclean_agg.round(4).to_dict(orient='records')
+
     return {
-            "status": "success",
-            "symbol": clean_symbol,
-            "summary": {
-                "total_count": len(df),
-                "clean_count": len(df[~is_outlier]),
-                "unclean_count": len(df[is_outlier])
-            },
-            "data": {
-                "raw_data": df.to_dict(orient='records'),           # ข้อมูลดิบทั้งหมด
-                "clean_data": df[~is_outlier].to_dict(orient='records'), # ข้อมูลที่ผ่านเกณฑ์
-                "unclean_data": df[is_outlier].to_dict(orient='records') # ข้อมูล Outlier
-            }
+        "status": "success",
+        "symbol": clean_symbol,
+        "summary": {
+            "total_count": len(raw_records),
+            "clean_count": len(clean_records),
+            "unclean_count": len(unclean_records)
+        },
+        "data": {
+            "raw_data": raw_records,
+            "clean_data": clean_records,
+            "unclean_data": unclean_records
+        }
     }

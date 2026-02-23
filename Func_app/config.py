@@ -6,8 +6,7 @@ SET50_TICKERS_BASE = [
     "PTT", "PTTEP", "PTTGC", "RATCH", "SAWAD", "SCB", "SCC", "SCGP", "TISCO", "TLI",
     "TOP", "TTB", "TU", "VGI", "WHA", "GLOBAL", "BAM", "CPAXT", "GPSC", "BLA"
 ]
-
-SET50_TICKERS = [f"{ticker}.BK" for ticker in SET50_TICKERS_BASE]
+SET50_TICKERS = [f"{ticker}.BK" for ticker in SET50_TICKERS_BASE if ticker != "DELTA"]
 
 # --- Helper Function ---
 def get_tickers(suffix=".BK"):

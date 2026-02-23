@@ -152,7 +152,7 @@ def api_get_stock_score(symbol: str):
 # 5. INDIVIDUAL METRICS (T-DTS & TEMA) (ย้ายมาไว้ตรงนี้ตามลำดับ)
 # ======================================================
 @app.get("/main_app/analyze_tdts/{input_stock}", tags=["Individual Metrics(T-DTS & TEMA)"])
-def api_analyze_tdts(input_stock: str, threshold: float = 20.0, start_year: int = 2022, end_year: int = 2026):
+def api_analyze_tdts(input_stock: str, threshold: float = 10.0, start_year: int = 2022, end_year: int = 2026):
     """Get T-DTS Analysis (Cache -> Live Fallback)"""
     stock_key = input_stock.upper().replace('.BK', '')
     
@@ -162,7 +162,7 @@ def api_analyze_tdts(input_stock: str, threshold: float = 20.0, start_year: int 
     return analyze_stock_tdts(input_stock, start_year, end_year, threshold)
 
 @app.get("/main_app/analyze_tema/{input_stock}", tags=["Individual Metrics(T-DTS & TEMA)"])
-def api_analyze_tema(input_stock: str, threshold: float = 20.0, start_year: int = 2022, end_year: int = 2026, window: int = 15):
+def api_analyze_tema(input_stock: str, threshold: float = 10.0, start_year: int = 2022, end_year: int = 2026, window: int = 15):
     """Get TEMA Analysis (Cache -> Live Fallback)"""
     stock_key = input_stock.upper().replace('.BK', '')
     
