@@ -94,7 +94,7 @@ def analyze_stock_seasonality(symbol: str):
                 # ======================================================
                 
                 # lass dividend amount
-                last_dividend_amt = subset['Dividends'][-1]
+                last_dividend_amt = subset['Dividends'].iloc[-1]
                 
                 
                 # B. ประมาณการวันจ่ายเงิน (Estimated Pay Date)
@@ -125,7 +125,6 @@ def analyze_stock_seasonality(symbol: str):
                 }
             else:
                 result_data[f'Tag{t}'] = None
-                
         return result_data
 
     except Exception as e:
